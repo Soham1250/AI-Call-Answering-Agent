@@ -1,0 +1,32 @@
+{
+  "name": "ai-call-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node --enable-source-maps dist/server.js",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1",
+    "@fastify/formbody": "^7.4.0",
+    "@fastify/websocket": "^8.3.1",
+    "twilio": "^5.3.6",
+    "zod": "^3.23.8",
+    "pg": "^8.11.5",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "tsx": "^4.15.7",
+    "prettier": "^3.3.3",
+    "eslint": "^9.8.0",
+    "@types/node": "^22.2.0",
+    "vitest": "^2.0.5"
+  }
+}
