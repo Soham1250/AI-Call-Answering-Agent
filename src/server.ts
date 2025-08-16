@@ -44,9 +44,9 @@ app.post('/voice/assistant', async (req, reply) => {
 
 // Media stream (upgrade later to handle audio frames)
 app.get('/media/stream', { websocket: true }, (conn, req) => {
-  conn.socket.on('message', (msg) => {
+  conn.socket.on('message', (msg: unknown) => {
     // Echo for now
-    conn.socket.send(msg);
+    conn.socket.send(msg as any);
   });
 });
 
