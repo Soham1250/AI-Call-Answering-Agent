@@ -7,6 +7,68 @@ This repository scaffolds a multilingual, low‑latency AI answering agent that 
 
 ---
 
+## 🚀 Quickstart (Local Dev)
+
+- __Requirements__: Node.js 18+; npm (or pnpm/yarn). Windows supported.
+- __Install__:
+  - `npm i`
+- __Environment__:
+  - Copy `.env.example` to `.env`
+  - Set: `TTS_KEY` (Azure Speech key), `AZURE_REGION` (e.g., `eastus`), optional `PORT` (default `3000`)
+  - Example `.env`:
+    ```env
+    TTS_KEY=your-azure-speech-key
+    AZURE_REGION=eastus
+    PORT=3000
+    ```
+- __Run dev server__:
+  - `npm run dev`
+  - Visit http://localhost:3000/health and http://localhost:3000/health/tts
+  - Both should return JSON with `ok: true` when env is configured
+- __Build & start__:
+  - `npm run build`
+  - `npm start`
+
+## 📦 Scripts
+
+- `npm run dev` — tsx watch on `src/server.ts`
+- `npm run build` — TypeScript build to `dist/`
+- `npm start` — run compiled server
+- `npm run test` — run unit tests once (Vitest)
+- `npm run test:watch` — watch mode
+- `npm run test:coverage` — coverage
+- `npm run lint` — ESLint
+- `npm run format` — Prettier
+
+## 🔗 Endpoints (current)
+
+- `GET /health` — overall health + TTS status
+- `GET /health/tts` — TTS-only health
+- `POST /voice/inbound` — Twilio webhook stub (returns TwiML)
+- `POST /voice/assistant` — Assistant leg stub (returns TwiML)
+- `WS /media/stream` — WebSocket (echo for now)
+
+Source: `src/server.ts`
+
+## 🧪 Testing
+
+- Unit tests: `npm run test`
+- Notable tests:
+  - `src/__tests__/tts.test.ts` — Azure TTS adapter (axios mocked)
+  - `src/__tests__/simple.test.ts` — basic sanity
+
+## 🌐 Twilio (dev) quick notes
+
+- Expose local server: `ngrok http 3000`
+- Set Twilio Voice webhook → `POST https://<ngrok-host>/voice/inbound`
+- Trial accounts may require verified caller IDs
+
+## 🐛 Troubleshooting
+
+- 404 on `/health`: server not running or different port. Check logs and `PORT`.
+- `/health/tts` shows `ok: false`: ensure both `TTS_KEY` and `AZURE_REGION` are set, then restart.
+- Windows: if port blocked, allow Node.js in Windows Defender Firewall.
+
 ## 🔑 Non‑Negotiables (Guardrails)
 
 1. The LLM is **classifier/extractor only** (intent, entities). It must **not author** the final reply.
