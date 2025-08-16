@@ -30,25 +30,11 @@ app.get('/health/tts', async () => ({
   region: process.env.AZURE_REGION || 'not configured'
 }));
 
-// Voice webhooks (Twilio-compatible). The AI agent will implement the handlers.
-app.post('/voice/inbound', async (req, reply) => {
-  // TODO: validate Twilio signature (if present)
-  // TODO: respond with TwiML to whisper and forward on '*'
-  reply.type('text/xml').send('<Response><Say>Stub inbound</Say></Response>');
-});
+// Voice routes (Twilio-compatible)
+await app.register((await import('./routes/voice')).default as any, { prefix: '/voice' });
 
-app.post('/voice/assistant', async (req, reply) => {
-  // TODO: start assistant leg, rate-limit check, return initial TwiML
-  reply.type('text/xml').send('<Response><Say>Hi, I am ImperialX\'s assistant.</Say></Response>');
-});
-
-// Media stream (upgrade later to handle audio frames)
-app.get('/media/stream', { websocket: true }, (conn, req) => {
-  conn.socket.on('message', (msg: unknown) => {
-    // Echo for now
-    conn.socket.send(msg as any);
-  });
-});
+// Media stream (WebSocket) echo stub
+await app.register((await import('./routes/ws')).default as any);
 
 const port = Number(process.env.PORT || 3000);
 app.listen({ port, host: '0.0.0.0' }).catch((err) => {
