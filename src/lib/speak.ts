@@ -1,5 +1,4 @@
-import { makeTTS } from './tts';
-import type { Locale } from './tts';
+import { makeTTS, type Locale } from './tts';
 
 // 16kHz, 16-bit mono = 320ms chunks
 const CHUNK_SIZE_MS = 320;
@@ -16,7 +15,11 @@ interface SpeakOptions {
   onError?: (error: Error) => void;
 }
 
-export interface SpeakResult {
+interface SpeakResult {
+  audioData: Uint8Array;
+  durationMs: number;
+  text: string;
+  locale: string;
   stop: () => void;
   promise: Promise<void>;
 }
@@ -32,22 +35,55 @@ export function setRewriter(newRewriter: { rewriteWithinGuardrails: (text: strin
   rewriter = newRewriter || defaultRewriter;
 }
 
-export function speak(options: SpeakOptions): SpeakResult {
-  const startTime = performance.now();
-  let ttsStartTime = 0;
-  let isStopped = false;
-  let resolveStopped: () => void;
-  const stopPromise = new Promise<void>((resolve) => {
-    resolveStopped = resolve;
-  });
+/**
+ * Speaker class that handles text-to-speech synthesis with chunked streaming
+ */
+export class Speaker {
+  private tts = makeTTS();
+  private audioQueue: Uint8Array[] = [];
+  private isSpeaking = false;
+  private stopRequested = false;
+  private onChunkCallback: ((chunk: Uint8Array) => void) | null = null;
+  private onEndCallback: (() => void) | null = null;
+  private onErrorCallback: ((error: Error) => void) | null = null;
 
-  const stop = () => {
-    if (isStopped) return;
-    isStopped = true;
-    resolveStopped();
-  };
+  private cleanup(): void {
+    this.isSpeaking = false;
+    this.stopRequested = false;
+  }
 
-  const processText = async (): Promise<void> => {
+  stop(): void {
+    if (this.isSpeaking) {
+      this.stopRequested = true;
+      this.audioQueue = [];
+      this.cleanup();
+    }
+  }
+
+  /**
+   * Converts text to speech and streams it in chunks
+   * @param options The options for speaking
+   */
+  async speak(options: SpeakOptions): Promise<SpeakResult> {
+    if (this.isSpeaking) {
+      this.stop();
+      // Small delay to allow the stop to take effect
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    this.isSpeaking = true;
+    this.stopRequested = false;
+    this.audioQueue = [];
+
+    const startTime = performance.now();
+    let ttsStartTime = 0;
+    let isStopped = false;
+    let resolveStopped: () => void;
+
+    const stopPromise = new Promise<void>((resolve) => {
+      resolveStopped = resolve;
+    });
+
     try {
       let finalText = options.text;
       
@@ -56,77 +92,96 @@ export function speak(options: SpeakOptions): SpeakResult {
         finalText = await rewriter.rewriteWithinGuardrails(finalText);
       }
 
-      // Get TTS instance
-      const tts = makeTTS();
+      // Get audio data from TTS service
+      const audioData = await this.tts.synth(finalText, options.locale);
       
-      // Start TTS synthesis
-      ttsStartTime = performance.now();
-      const audioData = await tts.synth(finalText, options.locale);
-      const ttsEndTime = performance.now();
-      
-      // Stream audio in chunks
-      const streamStartTime = performance.now();
-      await streamAudio(audioData, options.streamTo, stopPromise);
-      const streamEndTime = performance.now();
-      
-      if (!isStopped) {
-        const endTime = performance.now();
-        options.onDone?.({
-          ttsMs: ttsEndTime - ttsStartTime,
-          streamMs: streamEndTime - streamStartTime,
-          totalMs: endTime - startTime
-        });
+      if (this.stopRequested) {
+        return {
+          audioData: new Uint8Array(0),
+          durationMs: 0,
+          text: options.text,
+          locale: options.locale,
+          stop: () => {},
+          promise: Promise.resolve()
+        };
       }
+
+      // Process audio data in chunks
+      let position = 0;
+      const totalLength = audioData.length;
+      const startTime = performance.now();
+
+      while (position < totalLength && !this.stopRequested) {
+        const chunkEnd = Math.min(position + CHUNK_SIZE_BYTES, totalLength);
+        const chunk = audioData.slice(position, chunkEnd);
+        
+        this.audioQueue.push(chunk);
+        
+        try {
+          // Stream the chunk
+          await options.streamTo(chunk);
+          
+          // Notify listeners of new chunk
+          if (this.onChunkCallback) {
+            this.onChunkCallback(chunk);
+          }
+          
+          position = chunkEnd;
+        } catch (error) {
+          console.error('Error streaming audio chunk:', error);
+          if (this.onErrorCallback) {
+            this.onErrorCallback(error instanceof Error ? error : new Error(String(error)));
+          }
+          break;
+        }
+      }
+      
+      this.cleanup();
+      
+      const result = {
+        audioData,
+        durationMs: Math.round(performance.now() - startTime),
+        text: options.text,
+        locale: options.locale,
+        stop: () => this.stop(),
+        promise: Promise.resolve()
+      };
+      
+      return result;
+      
     } catch (error) {
-      if (!isStopped) {
-        options.onError?.(error instanceof Error ? error : new Error(String(error)));
+      const errorMessage = error instanceof Error ? error : new Error(String(error));
+      console.error('Error in TTS synthesis:', errorMessage);
+      
+      if (this.onErrorCallback) {
+        this.onErrorCallback(errorMessage);
       }
-    } finally {
-      stop();
+      
+      this.cleanup();
+      throw errorMessage;
     }
-  };
+  }
 
-  // Start processing
-  options.onStart?.();
-  const promise = processText();
+  // Event listeners
+  onChunk(callback: ((chunk: Uint8Array) => void) | null): void {
+    this.onChunkCallback = callback;
+  }
 
-  return {
-    stop,
-    promise
-  };
-}
+  onEnd(callback: (() => void) | null): void {
+    this.onEndCallback = callback;
+  }
 
-async function streamAudio(
-  audioData: Uint8Array,
-  onChunk: (chunk: Uint8Array) => Promise<void>,
-  stopPromise: Promise<void>
-): Promise<void> {
-  // Create a promise that resolves when the stream should stop
-  const stopRace = new Promise<boolean>((resolve) => {
-    stopPromise.then(() => resolve(true));
-  });
+  onError(callback: ((error: Error) => void) | null): void {
+    this.onErrorCallback = callback;
+  }
 
-  let position = 0;
-  const totalLength = audioData.length;
-
-  while (position < totalLength) {
-    const chunkEnd = Math.min(position + CHUNK_SIZE_BYTES, totalLength);
-    const chunk = audioData.slice(position, chunkEnd);
-    
-    // Check if we should stop
-    const shouldStop = await Promise.race([
-      stopRace,
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 10))
-    ]);
-    
-    if (shouldStop) {
-      break;
-    }
-    
-    await onChunk(chunk);
-    position = chunkEnd;
+  isSpeakingNow(): boolean {
+    return this.isSpeaking;
   }
 }
+
+// Singleton instance
+export const speaker = new Speaker();
 
 // For testing
 export const __testing__ = {

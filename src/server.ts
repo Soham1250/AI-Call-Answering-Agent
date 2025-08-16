@@ -11,7 +11,24 @@ await app.register(formbody);
 await app.register(websocket);
 
 // Health check
-app.get('/health', async () => ({ ok: true, ts: new Date().toISOString() }));
+app.get('/health', async () => ({
+  ok: true,
+  ts: new Date().toISOString(),
+  services: {
+    tts: {
+      ok: !!(process.env.TTS_KEY && process.env.AZURE_REGION),
+      provider: 'azure',
+      region: process.env.AZURE_REGION || 'not configured'
+    }
+  }
+}));
+
+// TTS Health Check
+app.get('/health/tts', async () => ({
+  ok: !!(process.env.TTS_KEY && process.env.AZURE_REGION),
+  provider: 'azure',
+  region: process.env.AZURE_REGION || 'not configured'
+}));
 
 // Voice webhooks (Twilio-compatible). The AI agent will implement the handlers.
 app.post('/voice/inbound', async (req, reply) => {

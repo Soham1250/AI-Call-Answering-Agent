@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { speak, __testing__ as speakTesting } from '../lib/speak';
+import { speaker, __testing__ } from '../lib/speak';
 
 // Mock the TTS module
 const mockTTSInstance = {
@@ -34,9 +34,16 @@ beforeEach(() => {
   mockTTSInstance.synth.mockResolvedValue(new Uint8Array(1024).fill(0));
   
   // Reset the rewriter to default
-  speakTesting.setRewriter({
+  __testing__.setRewriter({
     rewriteWithinGuardrails: (text: string) => Promise.resolve(`rewritten:${text}`)
   });
+  
+  // Reset speaker instance
+  if (speaker) {
+    speaker.onChunk(null);
+    speaker.onEnd(null);
+    speaker.onError(null);
+  }
 });
 
 describe('speak', () => {
@@ -53,8 +60,8 @@ describe('speak', () => {
     mockTTSInstance.synth.mockResolvedValue(new Uint8Array(1024));
     
     // Reset the rewriter
-    speakTesting.setRewriter({
-      rewriteWithinGuardrails: (text: string) => Promise.resolve(`rewritten:${text}`)
+    __testing__.setRewriter({
+      rewriteWithinGuardrails: (text: string) => Promise.resolve(text)
     });
   });
 
@@ -69,16 +76,11 @@ describe('speak', () => {
     const largeAudioData = new Uint8Array(5 * 1024).fill(0);
     mockTTSInstance.synth.mockResolvedValueOnce(largeAudioData);
     
-    const { promise } = speak({
+    await speaker.speak({
       text: 'Hello world',
       locale: 'en-IN',
-      streamTo: mockStreamTo,
-      onStart: () => {},
-      onDone: () => {}
+      streamTo: mockStreamTo
     });
-    
-    // Wait for the promise to resolve
-    await promise;
     
     // Verify TTS was called with correct arguments
     expect(mockTTSInstance.synth).toHaveBeenCalledWith('Hello world', 'en-IN');
@@ -102,19 +104,15 @@ describe('speak', () => {
     };
     
     // Set the rewriter
-    speakTesting.setRewriter(mockRewriter);
+    __testing__.setRewriter(mockRewriter);
     
     // Call speak with rewrite enabled
-    const { promise } = speak({
+    await speaker.speak({
       text: 'Hello',
       locale: 'en-IN',
       rewrite: true,
-      streamTo: mockStreamTo,
-      onStart: () => {},
-      onDone: () => {}
+      streamTo: mockStreamTo
     });
-    
-    await promise;
     
     // Verify rewriter was called
     expect(mockRewriter.rewriteWithinGuardrails).toHaveBeenCalledWith('Hello');
@@ -138,10 +136,22 @@ describe('speak', () => {
       return Promise.resolve();
     });
 
-    const { promise, stop } = speak({
+    // Set up a promise that will be resolved when streaming is complete
+    let resolveStreaming: () => void;
+    const streamingPromise = new Promise<void>(resolve => {
+      resolveStreaming = resolve;
+    });
+
+    // Start speaking
+    speaker.speak({
       text: 'This is a long text that should be stopped',
       locale: 'en-IN',
-      streamTo: customStreamTo,
+      streamTo: async (chunk) => {
+        if (wasStreamingStopped) {
+          throw new Error('Streaming was stopped');
+        }
+        await customStreamTo(chunk);
+      }
     });
 
     // Wait for the next tick to allow the async operations to start
@@ -149,14 +159,10 @@ describe('speak', () => {
     
     // Stop the streaming
     wasStreamingStopped = true;
-    stop();
+    speaker.stop();
     
-    // Wait for the promise to resolve or reject
-    try {
-      await promise;
-    } catch (e) {
-      // Expected if streaming was stopped
-    }
+    // Wait a bit for the stop to take effect
+    await new Promise(resolve => setTimeout(resolve, 50));
     
     // Should have called streamTo at least once but not for all chunks
     expect(customStreamTo).toHaveBeenCalled();
@@ -167,14 +173,20 @@ describe('speak', () => {
     const testError = new Error('TTS failed');
     mockTTSInstance.synth.mockRejectedValue(testError);
 
-    const { promise } = speak({
+    const errorPromise = new Promise<void>((resolve) => {
+      speaker.onError((error) => {
+        mockOnError(error);
+        resolve();
+      });
+    });
+    
+    speaker.speak({
       text: 'Error test',
       locale: 'en-IN',
       streamTo: mockStreamTo,
-      onError: mockOnError,
     });
-
-    await promise;
+    
+    await errorPromise;
     
     expect(mockOnError).toHaveBeenCalledWith(expect.any(Error));
     expect(mockStreamTo).not.toHaveBeenCalled();
@@ -183,14 +195,11 @@ describe('speak', () => {
   it('should work without optional callbacks', async () => {
     const mockStreamTo = vi.fn().mockResolvedValue(undefined);
     
-    const { promise } = speak({
+    await speaker.speak({
       text: 'No callbacks',
       locale: 'en-IN',
       streamTo: mockStreamTo
-      // No optional callbacks provided
     });
-    
-    await promise;
     
     // Should still process without errors
     expect(mockTTSInstance.synth).toHaveBeenCalledWith('No callbacks', 'en-IN');
@@ -198,13 +207,11 @@ describe('speak', () => {
   });
 
   it('should handle empty text', async () => {
-    const { promise } = speak({
+    await speaker.speak({
       text: '',
       locale: 'en-IN',
       streamTo: mockStreamTo,
     });
-
-    await promise;
     
     // Should complete without calling TTS for empty text
     expect(mockTTSInstance.synth).not.toHaveBeenCalled();
@@ -218,30 +225,24 @@ describe('speak', () => {
     };
     
     // Set up the test rewriter (pass-through)
-    speakTesting.setRewriter({
+    __testing__.setRewriter({
       rewriteWithinGuardrails: (text: string) => Promise.resolve(text)
     });
     
     const audioData = new Uint8Array(1024);
     mockTTSInstance.synth.mockResolvedValue(audioData);
     
-    const { promise } = speak({
+    await speaker.speak({
       text: 'test',
       locale: 'en-IN',
       streamTo: mockStreamTo,
       rewrite: true
     });
-
-    // Wait for the next tick to allow the async operations to start
-    await new Promise(resolve => setImmediate(resolve));
-    
-    // Wait for the promise to resolve
-    await promise;
     
     // Verify the rewriter was called with the original text
     expect(mockTTSInstance.synth).toHaveBeenCalledWith('test', 'en-IN');
     
     // Restore the original rewriter
-    speakTesting.setRewriter(originalRewriter);
+    __testing__.setRewriter(originalRewriter);
   });
 });

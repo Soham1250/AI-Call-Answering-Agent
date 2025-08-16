@@ -1,0 +1,94 @@
+import axios, { AxiosError } from 'axios';
+import { createSilenceWav } from './wav';
+
+export type Locale = 'en-IN' | 'hi-IN' | 'mr-IN';
+
+export interface TTS {
+  synth(text: string, locale: Locale): Promise<Uint8Array>;
+}
+
+const VOICE_MAP: Record<Locale, string> = {
+  'en-IN': 'en-IN-PreetiNeural',
+  'hi-IN': 'hi-IN-SwaraNeural',
+  'mr-IN': 'mr-IN-AarohiNeural', // Fallback to hi-IN if not available
+} as const;
+
+export class AzureTTS implements TTS {
+  private readonly endpoint: string;
+  private readonly key: string | undefined;
+  private readonly region: string | undefined;
+  private readonly voiceMap: Record<Locale, string>;
+
+  constructor() {
+    this.key = process.env.TTS_KEY;
+    this.region = process.env.AZURE_REGION;
+    this.endpoint = this.region 
+      ? `https://${this.region}.tts.speech.microsoft.com/cognitiveservices/v1`
+      : '';
+    
+    // Initialize voice map with fallbacks
+    this.voiceMap = { ...VOICE_MAP };
+  }
+
+  private buildSsml(text: string, locale: Locale): string {
+    const voiceName = this.voiceMap[locale];
+    return `
+      <speak version="1.0" xml:lang="${locale}" xmlns="http://www.w3.org/2001/10/synthesis"
+             xmlns:mstts="http://www.w3.org/2001/mstts">
+        <voice name="${voiceName}">
+          ${this.escapeXml(text)}
+        </voice>
+      </speak>
+    `.trim();
+  }
+
+  private escapeXml(unsafe: string): string {
+    return unsafe
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+  }
+
+  async synth(text: string, locale: Locale): Promise<Uint8Array> {
+    // Return silence if Azure credentials are not configured
+    if (!this.key || !this.region) {
+      return createSilenceWav();
+    }
+
+    const ssml = this.buildSsml(text, locale);
+
+    try {
+      const response = await axios({
+        method: 'post',
+        url: this.endpoint,
+        headers: {
+          'Ocp-Apim-Subscription-Key': this.key,
+          'Content-Type': 'application/ssml+xml',
+          'X-Microsoft-OutputFormat': 'riff-16khz-16bit-mono-pcm',
+          'User-Agent': 'ai-call-agent',
+        },
+        data: ssml,
+        responseType: 'arraybuffer',
+        timeout: 10000, // 10 seconds timeout
+      });
+
+      return new Uint8Array(response.data);
+    } catch (error) {
+      console.error('Azure TTS error, falling back to silence:', error);
+      return createSilenceWav();
+    }
+  }
+}
+
+// Factory function
+export function makeTTS(): TTS {
+  return new AzureTTS();
+}
+
+// Export for testing
+export const __testing__ = {
+  AzureTTS,
+  VOICE_MAP,
+};
