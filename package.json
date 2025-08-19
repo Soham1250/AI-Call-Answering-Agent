@@ -17,10 +17,12 @@
     "@fastify/formbody": "^7.4.0",
     "@fastify/websocket": "^8.3.1",
     "@types/lru-cache": "^7.10.10",
+    "@types/mongoose": "^5.11.97",
     "axios": "^1.11.0",
     "dotenv": "^16.4.5",
     "fastify": "^4.28.1",
     "lru-cache": "^11.1.0",
+    "mongoose": "^8.17.2",
     "pg": "^8.11.5",
     "twilio": "^5.3.6",
     "zod": "^3.23.8"
